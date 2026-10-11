@@ -522,27 +522,66 @@ def same_frame(record_frame, node_frame):
     return True
 
 
+def name_matches(node, record_name):
+    # record names are truncated by limit_text(); compare the visible prefix.
+    actual = node_name(node)
+    if record_name.endswith("...") and len(record_name) > 3:
+        return actual.startswith(record_name[:-3])
+    return actual == record_name
+
+
+def record_matches(node, record, window_bounds):
+    """True when node is still the element the record was captured from.
+
+    runtimeId is a child-index path, so after the UI changes (a dialog closes,
+    a list re-renders) the same path can resolve to an unrelated node. Acting on
+    it would silently hit the wrong target and still report success.
+    """
+    target_role = str(record.get("controlType") or "")
+    if target_role and node_role(node) != target_role:
+        return False
+    target_id = str(record.get("automationId") or "")
+    if target_id and accessible_id(node) != target_id:
+        return False
+    target_name = str(record.get("name") or "")
+    if target_name:
+        return name_matches(node, target_name)
+    if target_id:
+        return True
+    # Unnamed element: fall back to geometry inside the current window.
+    return same_frame(record.get("frame"), relative_frame(node, window_bounds))
+
+
 def find_element(app, record):
     if not record:
         return None
-    node = resolve_path(app, record.get("runtimeId") or [])
-    if node is not None:
+    window_index, window = main_window(app)
+    path = record.get("runtimeId") or []
+    if path and int(path[0]) != window_index:
+        # Captured in another top-level window (e.g. a dialog that has since
+        # closed). GTK may keep the hidden dialog alive, so its widgets still
+        # resolve and would accept actions; treat them as stale.
+        return None
+    window_bounds = extents(window)
+    node = resolve_path(app, path)
+    if node is not None and record_matches(node, record, window_bounds):
         return node
 
-    _, window = main_window(app)
-    target_name = str(record.get("name") or "")
-    target_id = str(record.get("automationId") or "")
-    target_role = str(record.get("controlType") or "")
-    window_bounds = extents(window)
     for candidate in iter_all(window):
-        if target_id and accessible_id(candidate) == target_id:
+        if record_matches(candidate, record, window_bounds):
             return candidate
-        if target_name and node_name(candidate) == target_name and node_role(candidate) == target_role:
-            return candidate
-        if target_role and node_role(candidate) == target_role:
-            if same_frame(record.get("frame"), relative_frame(candidate, window_bounds)):
-                return candidate
     return None
+
+
+def stale_element_error(record):
+    role = record.get("controlType") or "element"
+    name = record.get("name") or ""
+    label = "{} {!r}".format(role, name) if name else role
+    return RuntimeError(
+        "element_index {} ({}) is no longer present in the current UI; "
+        "the window changed since the last state. Call get_app_state and use "
+        "a fresh element_index.".format(record.get("index"), label)
+    )
 
 
 def preferred_action_index(node):
@@ -784,6 +823,65 @@ def scroll_element(direction, pages):
         time.sleep(0.04)
 
 
+SETTLE_MIN_SECONDS = 0.15
+SETTLE_POLL_SECONDS = 0.1
+SETTLE_TIMEOUT_SECONDS = 2.0
+SETTLE_SIGNATURE_NODES = 300
+POST_ACTION_TIMEOUT_MS = 2000
+
+
+def ui_signature(query):
+    """Cheap fingerprint of the app's active window, used to detect when the UI
+    has stopped changing after an action."""
+    try:
+        app = resolve_app(query)
+        window_index, window = main_window(app)
+    except Exception as exc:
+        return ("error", str(exc))
+    parts = [window_index, node_role(window), node_name(window), str(extents(window))]
+    seen = 0
+
+    def visit(node):
+        nonlocal seen
+        if node is None or seen >= SETTLE_SIGNATURE_NODES:
+            return
+        seen += 1
+        parts.append(node_role(node))
+        parts.append(node_name(node))
+        for index in range(child_count(node)):
+            visit(child_at(node, index))
+
+    visit(window)
+    return tuple(parts)
+
+
+def is_signature_error(value):
+    return isinstance(value, tuple) and value[:1] == ("error",)
+
+
+def wait_for_ui_settle(query, clock=time.monotonic, sleep=time.sleep, signature=None):
+    """Wait until two consecutive UI fingerprints match (or timeout).
+
+    A fixed short sleep returned snapshots taken mid-transition, e.g. a Save
+    dialog still listed after it had begun closing, which led agents to retry
+    on stale element indexes and to misreport the outcome.
+    """
+    signature = signature or ui_signature
+    start = clock()
+    sleep(SETTLE_MIN_SECONDS)
+    previous = signature(query)
+    while clock() - start < SETTLE_TIMEOUT_SECONDS:
+        sleep(SETTLE_POLL_SECONDS)
+        current = signature(query)
+        if is_signature_error(current):
+            # Cannot observe the app from this process; let the caller re-read.
+            return False
+        if current == previous:
+            return True
+        previous = current
+    return False
+
+
 def perform_operation(operation):
     tool = operation.get("tool")
     if tool == "list_apps":
@@ -804,6 +902,10 @@ def perform_operation(operation):
     bounds = operation.get("windowBounds") or extents(window)
     element_record = operation.get("element")
     element = find_element(app, element_record)
+    if element_record and element is None:
+        # Never fall back to the stale record's coordinates: that clicks
+        # whatever now occupies that spot and reports success.
+        raise stale_element_error(element_record)
 
     if tool == "click":
         click_method = (operation.get("click_method") or "auto").lower()
@@ -874,8 +976,18 @@ def perform_operation(operation):
     else:
         raise RuntimeError('unsupportedTool("{}")'.format(tool))
 
-    time.sleep(0.12)
-    return {"ok": True, "snapshot": build_snapshot(operation.get("app", ""))}
+    # The action has been delivered. If observing the result fails (some apps
+    # stop answering this process's AT-SPI calls after an action opens a modal
+    # dialog), report that separately so the caller can re-read the state from a
+    # fresh process instead of telling the agent the action failed.
+    safe(lambda: Atspi.set_timeout(POST_ACTION_TIMEOUT_MS, POST_ACTION_TIMEOUT_MS))
+    if not wait_for_ui_settle(operation.get("app", "")):
+        if is_signature_error(ui_signature(operation.get("app", ""))):
+            return {"ok": True, "snapshotError": "app state unavailable right after the action"}
+    try:
+        return {"ok": True, "snapshot": build_snapshot(operation.get("app", ""))}
+    except Exception as exc:
+        return {"ok": True, "snapshotError": str(exc)}
 
 
 def main():

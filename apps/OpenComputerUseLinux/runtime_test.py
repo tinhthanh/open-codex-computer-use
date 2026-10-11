@@ -171,5 +171,137 @@ class RuntimeKeyTests(unittest.TestCase):
         self.assertEqual(self.events, [])
 
 
+class FakeNode:
+    def __init__(self, role, name="", accessible_id="", children=None):
+        self.role = role
+        self.name = name
+        self.accessible_id = accessible_id
+        self.children = children or []
+
+    def get_role_name(self):
+        return self.role
+
+    def get_name(self):
+        return self.name
+
+    def get_accessible_id(self):
+        return self.accessible_id
+
+    def get_child_count(self):
+        return len(self.children)
+
+    def get_child_at_index(self, index):
+        return self.children[index]
+
+    def get_component_iface(self):
+        return None
+
+
+def save_record(index=7):
+    return {
+        "index": index,
+        "runtimeId": [0, 0],
+        "automationId": "",
+        "name": "Save",
+        "controlType": "push button",
+        "frame": None,
+    }
+
+
+class RuntimeStaleElementTests(unittest.TestCase):
+    def setUp(self):
+        self.runtime = load_runtime()
+
+    def use_window(self, window):
+        app = FakeNode("application", children=[window])
+        self.runtime.main_window = lambda _app: (0, window)
+        return app
+
+    def test_path_that_now_points_at_another_element_is_rejected(self):
+        # The Save dialog closed; the same child path [0, 0] now hits a menu item.
+        window = FakeNode("frame", "~/t2.txt - Mousepad", children=[FakeNode("menu item", "DPatch")])
+        app = self.use_window(window)
+
+        self.assertIsNone(self.runtime.find_element(app, save_record()))
+
+    def test_element_from_another_window_is_stale(self):
+        # GTK keeps the closed Save dialog alive at window index 1; its button
+        # still resolves but must not be clicked while window 0 is active.
+        dialog = FakeNode("dialog", "Save As", children=[FakeNode("push button", "Save")])
+        main = FakeNode("frame", "*Untitled 1 - Mousepad")
+        app = FakeNode("application", children=[main, dialog])
+        self.runtime.main_window = lambda _app: (0, main)
+        record = dict(save_record(), runtimeId=[1, 0])
+
+        self.assertIsNone(self.runtime.find_element(app, record))
+
+    def test_element_found_again_after_reorder(self):
+        save = FakeNode("push button", "Save")
+        window = FakeNode("dialog", "Save As", children=[FakeNode("push button", "Cancel"), save])
+        app = self.use_window(window)
+
+        self.assertIs(self.runtime.find_element(app, save_record()), save)
+
+    def test_truncated_name_matches_prefix(self):
+        node = FakeNode("label", "x" * 600)
+        record = {"controlType": "label", "name": "x" * 500 + "..."}
+
+        self.assertTrue(self.runtime.record_matches(node, record, None))
+
+    def test_role_mismatch_is_rejected(self):
+        record = {"controlType": "push button", "name": "Save"}
+
+        self.assertFalse(self.runtime.record_matches(FakeNode("menu item", "Save"), record, None))
+
+    def test_stale_element_error_names_the_element(self):
+        message = str(self.runtime.stale_element_error(save_record(137)))
+
+        self.assertIn("137", message)
+        self.assertIn("push button 'Save'", message)
+        self.assertIn("get_app_state", message)
+
+
+class RuntimeSettleTests(unittest.TestCase):
+    def setUp(self):
+        self.runtime = load_runtime()
+        self.now = 0.0
+
+    def clock(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+    def test_returns_once_two_consecutive_signatures_match(self):
+        frames = iter(["dialog", "closing", "main", "main", "never"])
+
+        settled = self.runtime.wait_for_ui_settle(
+            "app", clock=self.clock, sleep=self.sleep, signature=lambda _q: next(frames)
+        )
+
+        self.assertTrue(settled)
+        self.assertLess(self.now, self.runtime.SETTLE_TIMEOUT_SECONDS)
+
+    def test_lookup_error_stops_waiting_so_caller_can_reread(self):
+        frames = iter([("main",), ("error", "appNotFound")])
+
+        settled = self.runtime.wait_for_ui_settle(
+            "app", clock=self.clock, sleep=self.sleep, signature=lambda _q: next(frames)
+        )
+
+        self.assertFalse(settled)
+        self.assertLess(self.now, self.runtime.SETTLE_TIMEOUT_SECONDS)
+
+    def test_gives_up_after_timeout_when_ui_keeps_changing(self):
+        counter = iter(range(1000))
+
+        settled = self.runtime.wait_for_ui_settle(
+            "app", clock=self.clock, sleep=self.sleep, signature=lambda _q: next(counter)
+        )
+
+        self.assertFalse(settled)
+        self.assertGreaterEqual(self.now, self.runtime.SETTLE_TIMEOUT_SECONDS)
+
+
 if __name__ == "__main__":
     unittest.main()

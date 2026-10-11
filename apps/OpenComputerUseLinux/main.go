@@ -180,7 +180,17 @@ type linuxResponse struct {
 	Text     string       `json:"text,omitempty"`
 	Error    string       `json:"error,omitempty"`
 	Snapshot *appSnapshot `json:"snapshot,omitempty"`
+	// SnapshotError is set when an action was delivered but its result could
+	// not be observed from the same runtime process.
+	SnapshotError string `json:"snapshotError,omitempty"`
 }
+
+// Overridable in tests.
+var (
+	runLinuxRuntime        = runPython
+	postActionRereadDelay  = 400 * time.Millisecond
+	postActionRereadTrials = 4
+)
 
 type service struct {
 	snapshots map[string]*appSnapshot
@@ -270,7 +280,7 @@ func (s *service) callTool(name string, args map[string]any) toolCallResult {
 }
 
 func (s *service) listApps() toolCallResult {
-	response, err := runPython(linuxRequest{Tool: "list_apps"})
+	response, err := runLinuxRuntime(linuxRequest{Tool: "list_apps"})
 	if err != nil {
 		return textResult(err.Error(), true)
 	}
@@ -468,7 +478,7 @@ func (s *service) setValue(app, elementIndex, value string) toolCallResult {
 
 func (s *service) actionResult(app string, request linuxRequest) toolCallResult {
 	snapshot, result := s.refreshSnapshot(app, request)
-	if result.IsError {
+	if result.IsError || snapshot == nil {
 		return result
 	}
 	return snapshot.result()
@@ -479,18 +489,48 @@ func (s *service) currentSnapshot(app string) *appSnapshot {
 }
 
 func (s *service) refreshSnapshot(app string, request linuxRequest) (*appSnapshot, toolCallResult) {
-	response, err := runPython(request)
+	response, err := runLinuxRuntime(request)
 	if err != nil {
 		return nil, textResult(err.Error(), true)
 	}
 	if !response.OK {
 		return nil, textResult(response.Error, true)
 	}
+	if response.Snapshot == nil && response.SnapshotError != "" {
+		return s.rereadAfterAction(app, response.SnapshotError)
+	}
 	if response.Snapshot == nil {
 		return nil, textResult("Linux runtime did not return an app snapshot.", true)
 	}
 	s.rememberSnapshot(app, response.Snapshot)
 	return response.Snapshot, toolCallResult{}
+}
+
+// rereadAfterAction re-reads app state from fresh runtime processes. The action
+// already happened, so failing here must not be reported as a failed action:
+// that makes agents retry it (e.g. open a second dialog) or misreport results.
+func (s *service) rereadAfterAction(app, cause string) (*appSnapshot, toolCallResult) {
+	s.forgetSnapshot(app)
+	for attempt := 0; attempt < postActionRereadTrials; attempt++ {
+		time.Sleep(postActionRereadDelay)
+		response, err := runLinuxRuntime(linuxRequest{Tool: "get_app_state", App: app})
+		if err == nil && response.OK && response.Snapshot != nil {
+			s.rememberSnapshot(app, response.Snapshot)
+			return response.Snapshot, toolCallResult{}
+		}
+	}
+	return nil, textResult("The action was performed, but the app state could not be read afterwards ("+cause+"). Do not repeat the action; call get_app_state to check its result first.", false)
+}
+
+func (s *service) forgetSnapshot(query string) {
+	snapshot := s.currentSnapshot(query)
+	keys := []string{query}
+	if snapshot != nil {
+		keys = append(keys, snapshot.App.Name, snapshot.App.BundleIdentifier, strconv.Itoa(snapshot.App.PID))
+	}
+	for _, key := range keys {
+		delete(s.snapshots, strings.ToLower(strings.TrimSpace(key)))
+	}
 }
 
 func (s *service) rememberSnapshot(query string, snapshot *appSnapshot) {

@@ -444,3 +444,65 @@ func TestDoctorJSONRejectsUnsupportedPermissionDiagnostics(t *testing.T) {
 		t.Fatal("unsupported JSON mode must not emit text on stdout")
 	}
 }
+
+func stubLinuxRuntime(t *testing.T, responses ...*linuxResponse) *[]linuxRequest {
+	t.Helper()
+	var calls []linuxRequest
+	previousRun, previousDelay := runLinuxRuntime, postActionRereadDelay
+	runLinuxRuntime = func(request linuxRequest) (*linuxResponse, error) {
+		calls = append(calls, request)
+		if len(responses) == 0 {
+			return &linuxResponse{OK: false, Error: "appNotFound(\"mousepad\")"}, nil
+		}
+		next := responses[0]
+		responses = responses[1:]
+		return next, nil
+	}
+	postActionRereadDelay = 0
+	t.Cleanup(func() { runLinuxRuntime, postActionRereadDelay = previousRun, previousDelay })
+	return &calls
+}
+
+func mousepadSnapshot(title string) *appSnapshot {
+	return &appSnapshot{App: appDescriptor{Name: "mousepad", PID: 7}, WindowTitle: title}
+}
+
+func TestActionRereadsStateInFreshProcessWhenSnapshotFails(t *testing.T) {
+	calls := stubLinuxRuntime(t,
+		&linuxResponse{OK: true, SnapshotError: "appNotFound(\"mousepad\")"},
+		&linuxResponse{OK: false, Error: "appNotFound(\"mousepad\")"},
+		&linuxResponse{OK: true, Snapshot: mousepadSnapshot("Save As")},
+	)
+	service := newService()
+	service.rememberSnapshot("mousepad", mousepadSnapshot("Untitled 1 - Mousepad"))
+
+	result := service.callTool("press_key", map[string]any{"app": "mousepad", "key": "ctrl+s"})
+
+	if result.IsError {
+		t.Fatalf("expected success, got %#v", result)
+	}
+	if !strings.Contains(result.Content[0].Text, `Window: "Save As"`) {
+		t.Fatalf("expected re-read state, got %q", result.Content[0].Text)
+	}
+	if len(*calls) != 3 || (*calls)[1].Tool != "get_app_state" {
+		t.Fatalf("expected action + 2 re-reads, got %#v", *calls)
+	}
+}
+
+func TestActionWithUnreadableStateIsNotReportedAsFailure(t *testing.T) {
+	stubLinuxRuntime(t, &linuxResponse{OK: true, SnapshotError: "appNotFound(\"mousepad\")"})
+	service := newService()
+	service.rememberSnapshot("mousepad", mousepadSnapshot("Untitled 1 - Mousepad"))
+
+	result := service.callTool("press_key", map[string]any{"app": "mousepad", "key": "ctrl+s"})
+
+	if result.IsError {
+		t.Fatalf("action was performed; must not be an error: %#v", result)
+	}
+	if !strings.Contains(result.Content[0].Text, "Do not repeat the action") {
+		t.Fatalf("missing guidance: %q", result.Content[0].Text)
+	}
+	if service.currentSnapshot("mousepad") != nil {
+		t.Fatal("stale snapshot must be dropped so element indexes cannot be reused")
+	}
+}
