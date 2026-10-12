@@ -21,6 +21,16 @@ enum PermissionOnboardingApp {
         application.run()
     }
 
+    /// Shows the permission window unless it is already on screen, for a tool
+    /// call refused for missing permissions (calls can come in quick succession).
+    static func presentIfNeeded() {
+        if let window = presentedWindowController?.window, window.isVisible {
+            window.orderFrontRegardless()
+            return
+        }
+        present()
+    }
+
     static func present(terminateOnCompletion: Bool = true) {
         guard !PermissionDiagnostics.current().allGranted else {
             return

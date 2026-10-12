@@ -39,11 +39,42 @@ private func normalizedElementIndexNumber(_ value: Double) -> String? {
 public final class ComputerUseToolDispatcher {
     private let service: ComputerUseService
 
+    /// Which macOS permissions a desktop tool still needs. The app agent sets
+    /// it; left alone (tests, fixtures) nothing is checked.
+    nonisolated(unsafe) public static var missingPermissions: () -> [SystemPermissionKind] = { [] }
+
+    /// Called when a tool is refused for missing permissions, so the app can
+    /// show its permission window to the person at the Mac instead of leaving
+    /// them with an error only the agent sees.
+    nonisolated(unsafe) public static var onMissingPermissions: (([SystemPermissionKind]) -> Void)?
+
+    /// The agent-facing message for a tool refused for missing permissions.
+    public static func missingPermissionsMessage(_ missing: [SystemPermissionKind]) -> String {
+        // The names System Settings → Privacy & Security uses.
+        let names = missing.map { kind -> String in
+            switch kind {
+            case .accessibility: return "Accessibility"
+            case .screenRecording: return "Screen Recording"
+            }
+        }.joined(separator: " and ")
+        return "Open Computer Use needs \(names) on this Mac before it can use apps. "
+            + "A window explaining how to allow it just opened on the Mac: ask the user to allow "
+            + "\"Open Computer Use\" in System Settings → Privacy & Security, then try again. "
+            + "Do not try to change System Settings yourself."
+    }
+
     public init(service: ComputerUseService = ComputerUseService()) {
         self.service = service
     }
 
     public func callTool(name: String, arguments: [String: Any]) throws -> ToolCallResult {
+        if name != "list_apps" {
+            let missing = Self.missingPermissions()
+            if !missing.isEmpty {
+                Self.onMissingPermissions?(missing)
+                throw ComputerUseError.message(Self.missingPermissionsMessage(missing))
+            }
+        }
         switch name {
         case "list_apps":
             return service.listApps()

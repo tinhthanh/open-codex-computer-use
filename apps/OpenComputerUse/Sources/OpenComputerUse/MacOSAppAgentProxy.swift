@@ -180,6 +180,15 @@ private final class MacOSAppAgentRuntime: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Desktop tools need Accessibility and Screen Recording: refuse them
+        // with a clear message, and show the person at the Mac how to allow
+        // them, instead of failing deep inside an AX call.
+        ComputerUseToolDispatcher.missingPermissions = { PermissionDiagnostics.current().missingPermissions }
+        ComputerUseToolDispatcher.onMissingPermissions = { _ in
+            Task { @MainActor in
+                PermissionOnboardingApp.presentIfNeeded()
+            }
+        }
         turnEndedObserver = DistributedNotificationCenter.default().addObserver(
             forName: openComputerUseTurnEndedNotificationName,
             object: nil,

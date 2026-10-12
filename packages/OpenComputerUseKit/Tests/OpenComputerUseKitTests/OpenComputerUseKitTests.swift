@@ -470,6 +470,32 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertTrue(diagnostics.missingPermissions.isEmpty)
     }
 
+    func testToolsAreRefusedWithGuidanceWhenPermissionsAreMissing() {
+        let previousCheck = ComputerUseToolDispatcher.missingPermissions
+        let previousHook = ComputerUseToolDispatcher.onMissingPermissions
+        defer {
+            ComputerUseToolDispatcher.missingPermissions = previousCheck
+            ComputerUseToolDispatcher.onMissingPermissions = previousHook
+        }
+        var shown: [SystemPermissionKind] = []
+        ComputerUseToolDispatcher.missingPermissions = { [.accessibility, .screenRecording] }
+        ComputerUseToolDispatcher.onMissingPermissions = { shown = $0 }
+
+        let dispatcher = ComputerUseToolDispatcher()
+        let refused = dispatcher.callToolAsResult(name: "get_app_state", arguments: ["app": "Finder"])
+
+        XCTAssertTrue(refused.isError)
+        let text = refused.primaryText ?? ""
+        XCTAssertTrue(text.contains("Accessibility and Screen Recording"), text)
+        XCTAssertTrue(text.contains("ask the user"), text)
+        XCTAssertEqual(shown, [.accessibility, .screenRecording])
+
+        // Listing apps needs no permission, so it still works and shows nothing.
+        shown = []
+        XCTAssertFalse(dispatcher.callToolAsResult(name: "list_apps", arguments: [:]).isError)
+        XCTAssertEqual(shown, [])
+    }
+
     func testListedAppDescriptorRendersFrontmostBeforeRunning() {
         let descriptor = ListedAppDescriptor(
             name: "Sample",
