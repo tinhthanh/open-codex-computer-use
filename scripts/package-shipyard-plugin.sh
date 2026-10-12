@@ -47,12 +47,23 @@ case "${os}" in
     codesign --verify --deep --strict "${app}"
     ditto "${app}" "${plugin_dir}/Open Computer Use.app"
     command="Open Computer Use.app/Contents/MacOS/OpenComputerUse"
+    # Run with no args, the app opens its permission window; `doctor --json`
+    # reports allGranted. Shipyard starts it when the plugin is allowed.
+    setup_json=',
+  "setup": {
+    "server": "computer",
+    "args": [],
+    "status": ["doctor", "--json"],
+    "ready": "allGranted",
+    "label": "Allow Accessibility and Screen Recording for Open Computer Use"
+  }'
     ;;
   linux)
     "${repo_root}/scripts/build-open-computer-use-linux.sh" --arch "${arch}" --out-dir "${out_dir}/.linux" >/dev/null
     install -D -m 0755 "${out_dir}/.linux/${arch}/open-computer-use" "${plugin_dir}/bin/open-computer-use"
     rm -rf "${out_dir}/.linux"
     command="bin/open-computer-use"
+    setup_json=""
     ;;
   *)
     echo "Unsupported --os ${os} (use darwin or linux)" >&2
@@ -83,7 +94,7 @@ cat > "${plugin_dir}/berth-plugin.json" <<JSON
       "path": "skills/berth-computer/SKILL.md",
       "sha256": "${skill_sha}"
     }
-  }
+  }${setup_json}
 }
 JSON
 
