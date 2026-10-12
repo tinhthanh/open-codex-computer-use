@@ -5,8 +5,8 @@ import XCTest
 
 final class OpenComputerUseKitTests: XCTestCase {
     func testAppAgentSocketFileNamePreservesLegacyDefault() {
-        XCTAssertEqual(openComputerUseAppAgentSocketFileName(namespace: nil), "open-computer-use-agent.sock")
-        XCTAssertEqual(openComputerUseAppAgentSocketFileName(namespace: "   "), "open-computer-use-agent.sock")
+        XCTAssertEqual(openComputerUseAppAgentSocketFileName(namespace: nil), "tinhthanh-open-computer-use-agent.sock")
+        XCTAssertEqual(openComputerUseAppAgentSocketFileName(namespace: "   "), "tinhthanh-open-computer-use-agent.sock")
     }
 
     func testAppAgentSocketFileNameIsDeterministicAndNamespaced() {
@@ -15,7 +15,7 @@ final class OpenComputerUseKitTests: XCTestCase {
 
         XCTAssertEqual(first, openComputerUseAppAgentSocketFileName(namespace: "boss-resume:profile-a"))
         XCTAssertNotEqual(first, second)
-        XCTAssertTrue(first.hasPrefix("open-computer-use-agent-"))
+        XCTAssertTrue(first.hasPrefix("tinhthanh-open-computer-use-agent-"))
         XCTAssertTrue(first.hasSuffix(".sock"))
         XCTAssertLessThan(first.count, 80)
     }

@@ -122,9 +122,11 @@ public struct PermissionDiagnostics: Sendable {
 
 public enum PermissionSupport {
     public static let bundleDisplayName = "Open Computer Use"
-    public static let bundleIdentifier = "com.ifuryst.opencomputeruse"
+    // The fork has its own identity, so its macOS permissions (TCC) and app
+    // agent never mix with an upstream install of Open Computer Use.
+    public static let bundleIdentifier = "com.tinhthanh.opencomputeruse"
     public static let developmentBundleDisplayName = "Open Computer Use (Dev)"
-    public static let developmentBundleIdentifier = "com.ifuryst.opencomputeruse.dev"
+    public static let developmentBundleIdentifier = "com.tinhthanh.opencomputeruse.dev"
     private static let releaseAppBundleName = "\(bundleDisplayName).app"
     private static let developmentAppBundleName = "\(developmentBundleDisplayName).app"
     private static let appVariantInfoKey = "OpenComputerUseAppVariant"
