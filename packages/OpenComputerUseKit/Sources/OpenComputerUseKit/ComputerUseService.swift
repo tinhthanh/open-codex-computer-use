@@ -509,7 +509,21 @@ public final class ComputerUseService {
             return .text("ok")
         }
 
-        return snapshotResult(for: try refreshSnapshot(for: query, recoveryPolicy: recoveryPolicy), style: .actionResult)
+        // Read back only an app that is still running: an action that quit
+        // it (cmd+q, a Quit button) would otherwise have it opened again
+        // just to describe it.
+        do {
+            return snapshotResult(for: try refreshSnapshot(for: query, recoveryPolicy: recoveryPolicy, launch: false), style: .actionResult)
+        } catch ComputerUseError.appNotFound {
+            forgetSnapshots(for: query)
+            return .text("\(query) is no longer running: the action quit it. Call get_app_state to open it again.")
+        }
+    }
+
+    private func forgetSnapshots(for query: String) {
+        let key = query.lowercased()
+        guard let snapshot = snapshotsByApp[key] else { return }
+        snapshotsByApp = snapshotsByApp.filter { $0.value.app.pid != snapshot.app.pid }
     }
 
     public func listApps() -> ToolCallResult {
@@ -953,9 +967,10 @@ public final class ComputerUseService {
         for query: String,
         textLimit: SnapshotTextLimit = .defaults,
         treeLimits: AccessibilityTreeLimits = .defaults,
-        recoveryPolicy: SnapshotRecoveryPolicy = .allowActivation
+        recoveryPolicy: SnapshotRecoveryPolicy = .allowActivation,
+        launch: Bool = true
     ) throws -> AppSnapshot {
-        let app = try AppDiscovery.resolve(query)
+        let app = try AppDiscovery.resolve(query, launch: launch)
         let snapshot = try SnapshotBuilder.build(
             for: app,
             textLimit: textLimit,
