@@ -141,7 +141,11 @@ enum AppDiscovery {
             }
     }
 
-    static func resolve(_ query: String) throws -> RunningAppDescriptor {
+    /// The running app `query` names. With `launch` (the default) an app that
+    /// isn't running is opened first; without it, it is `appNotFound`, which
+    /// is what reading an app back after an action wants: an action that quit
+    /// the app (cmd+q) must not open it again.
+    static func resolve(_ query: String, launch: Bool = true) throws -> RunningAppDescriptor {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let running = runningApps()
 
@@ -151,6 +155,10 @@ enum AppDiscovery {
 
         if let match = resolvedRunningApp(in: running, matching: normalizedQuery) {
             return match
+        }
+
+        guard launch else {
+            throw ComputerUseError.appNotFound(normalizedQuery)
         }
 
         try launchIfPossible(normalizedQuery)
