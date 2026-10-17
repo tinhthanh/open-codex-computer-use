@@ -4,6 +4,7 @@
 # berth-computer skill by sha256, ready for ~/.berth/plugins/computer.
 #
 #   scripts/package-shipyard-plugin.sh --os darwin            # uses dist/Open Computer Use.app
+#     (build it with --arch universal for Apple silicon and Intel boxes)
 #   scripts/package-shipyard-plugin.sh --os linux --arch arm64
 #
 # macOS: build and sign the app first, so its Accessibility / Screen Recording
@@ -22,7 +23,7 @@ while [[ $# -gt 0 ]]; do
     --os) os="${2:?--os requires a value}"; shift 2 ;;
     --arch) arch="${2:?--arch requires a value}"; shift 2 ;;
     --out-dir) out_dir="${2:?--out-dir requires a value}"; shift 2 ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -47,6 +48,13 @@ case "${os}" in
     codesign --verify --deep --strict "${app}"
     ditto "${app}" "${plugin_dir}/Open Computer Use.app"
     command="Open Computer Use.app/Contents/MacOS/OpenComputerUse"
+    # Name the archive for what the app was built for (--arch universal
+    # gives Apple silicon and Intel), not for this Mac.
+    case "$(lipo -archs "${plugin_dir}/${command}")" in
+      *x86_64*arm64*|*arm64*x86_64*) arch="universal" ;;
+      x86_64) arch="amd64" ;;
+      arm64) arch="arm64" ;;
+    esac
     # Run with no args, the app opens its permission window; `doctor --json`
     # reports allGranted. Shipyard starts it when the plugin is allowed.
     setup_json=',
