@@ -63,6 +63,7 @@ case "${os}" in
     "args": [],
     "status": ["doctor", "--json"],
     "ready": "allGranted",
+    "problem": "problem",
     "label": "Allow Accessibility and Screen Recording for Open Computer Use"
   }'
     ;;
