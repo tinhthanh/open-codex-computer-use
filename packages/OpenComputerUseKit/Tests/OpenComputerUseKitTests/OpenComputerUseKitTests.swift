@@ -50,6 +50,14 @@ final class OpenComputerUseKitTests: XCTestCase {
                 XCTAssertEqual(payload["allGranted"] as? Bool, accessibility && screenCapture)
                 XCTAssertEqual(payload["missingPermissions"] as? [String],
                                diagnostics.missingPermissions.map(\.rawValue))
+                if accessibility && screenCapture {
+                    XCTAssertTrue(payload["problem"] is NSNull)
+                } else {
+                    let problem = try XCTUnwrap(payload["problem"] as? String)
+                    XCTAssertTrue(problem.contains("Privacy & Security"))
+                    XCTAssertEqual(problem.contains("Accessibility"), !accessibility)
+                    XCTAssertEqual(problem.contains("Screen Recording"), !screenCapture)
+                }
             }
         }
     }

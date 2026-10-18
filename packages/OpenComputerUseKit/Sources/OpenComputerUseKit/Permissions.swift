@@ -85,6 +85,20 @@ public struct PermissionDiagnostics: Sendable {
         )
     }
 
+    /// What is left, in the words System Settings uses, for a host that
+    /// shows it to the person (Shipyard's setup.problem); nil when granted.
+    public var problem: String? {
+        let missing = missingPermissions
+        guard !missing.isEmpty else { return nil }
+        let names = missing.map { kind -> String in
+            switch kind {
+            case .accessibility: return "Accessibility"
+            case .screenRecording: return "Screen Recording"
+            }
+        }.joined(separator: " and ")
+        return "In System Settings → Privacy & Security, allow \"Open Computer Use\" under \(names)"
+    }
+
     public var summary: String {
         "Permissions: accessibility=\(accessibilityTrusted ? "granted" : "missing"), screenRecording=\(screenCaptureGranted ? "granted" : "missing")"
     }
@@ -97,6 +111,7 @@ public struct PermissionDiagnostics: Sendable {
             "screenCaptureGranted": screenCaptureGranted,
             "allGranted": allGranted,
             "missingPermissions": missingPermissions.map(\.rawValue),
+            "problem": problem ?? NSNull(),
         ]
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self)
