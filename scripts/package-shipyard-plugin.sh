@@ -81,6 +81,8 @@ case "${os}" in
 esac
 
 cp "${repo_root}/plugins/shipyard/computer/skills/berth-computer/SKILL.md" "${plugin_dir}/skills/berth-computer/SKILL.md"
+# Its icon in Settings → Plugins (Vetgo; Shipyard ignores it).
+cp "${repo_root}/plugins/shipyard/computer/icon.svg" "${plugin_dir}/icon.svg"
 
 sha256() { shasum -a 256 "$1" | awk '{print $1}'; }
 bin_sha="$(sha256 "${plugin_dir}/${command}")"
@@ -91,6 +93,7 @@ cat > "${plugin_dir}/berth-plugin.json" <<JSON
   "name": "Computer use",
   "version": "${version}",
   "description": "Lets agents use desktop apps through the accessibility tree (open-computer-use ${version}, ${commit}, ${os}-${arch}).",
+  "icon": "icon.svg",
   "mcp": {
     "computer": {
       "command": "${command}",
